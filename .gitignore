@@ -1,5 +1,14 @@
 retrieve_creds.py
+Pull Orders from Coinbase for Net Investments.py
+Pull Orders from Robinhood for Net Investments.py
+
+# All these text files types and links
+*.xlsx
+*.txt
+*.lnk
+*.url
+
+# All these folders
 __pycache__/
 Downloaded eStatement/
-Trading Bots.lnk
-*.txt
+Old Money Management Tools/
