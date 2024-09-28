@@ -1,9 +1,11 @@
-# Money Manager Script
+<h1>
+    <p align="center">Money Manager Script</p>
+</h1>
 
 This Python script is designed to assist in managing financial transactions, investments, and eStatements by automating various tasks such as retrieving transaction data from online banking platforms, categorizing transactions, fetching investment information from Robinhood and Coinbase, and downloading eStatements from online banking portals.
 
 <div style="text-align: center;">
-    <img src="Money%20Manager%20Lic.jpg" alt="Money Manager Logo" width="300"/>
+    <img src="Money%20Manager%20Pic.webp" alt="Money Manager Logo" width="500"/>
 </div>
 
 ## Requirements
