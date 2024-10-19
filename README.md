@@ -44,7 +44,7 @@ The script performs various tasks such as:
 ### The investment portfolio part:
 
 | Symbol | Name | Investment Type | Sector | Industry | Current Quantity | Current Equity | All Time Net Loss or Gain |
-|--------|------|-----------------|--------|----------|------------------|----------------|--------------------------|
+|--------|------|-----------------|--------|----------|------------------|----------------|---------------------------|
 
 ## Configuration
 
