@@ -45,6 +45,7 @@ The script performs various tasks such as:
 
 | Symbol | Name | Investment Type | Sector | Industry | Current Quantity | Current Equity | All Time Net Loss or Gain |
 |--------|------|-----------------|--------|----------|------------------|----------------|---------------------------|
+|        |      |                 |        |          |                  |                |                           |
 
 ## Configuration
 
