@@ -15,6 +15,10 @@ import time
 import os
 import re
 
+#               ****************
+#               Helper Functions
+#               ****************
+
 def increment(match):
 
     number = int(match.group(1))
@@ -70,6 +74,9 @@ def extract_and_remove_date(description, post_date):
         except Exception:
             formatted_date = str(post_date)  # fallback if not datetime-like
         return formatted_date, description
+
+#               ****************
+#               ****************
 
 class Money_Manager:
 
@@ -133,10 +140,11 @@ class Money_Manager:
 
         # You need to put the error handling back into this scraping routine... 
 
-        # Grab what you need from Robinhood
-        login = rh.authentication.login(self.robinhood_u, self.robinhood_p) 
+        # Data retrieval from Robinhood
+        rh.authentication.login(self.robinhood_u, self.robinhood_p) 
         self.wb.sheets["Personal Investment Portfolio"].range( self.account3_name.replace(" ","_") ).value = rh.profiles.load_account_profile()["cash_available_for_withdrawal"]
         brokerage_interest_income_json_resp = rh.request_get("https://api.robinhood.com/accounts/sweeps")
+        spending_account_transactions_json_resp = rh.request_get("https://minerva.robinhood.com/history/transactions/")
         rh.authentication.logout()
 
         # Create a table out of the brokerage interest income data that you'll be adding to the transactions table
@@ -371,7 +379,7 @@ class Money_Manager:
         # +++ Robinhood +++
 
         # Login
-        login = rh.authentication.login(self.robinhood_u, self.robinhood_p) 
+        rh.authentication.login(self.robinhood_u, self.robinhood_p)
 
         # Get holdings data
         holdings_data = rh.account.build_holdings()

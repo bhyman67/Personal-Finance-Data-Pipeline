@@ -1,21 +1,6 @@
-
-# Files to ignore
-retrieve_creds.py
-Pull Orders from Coinbase for Net Investments.py
-Pull Orders from Robinhood for Net Investments.py
-Calculate Future Balance with Interest.py
-development and testing.ipynb
-Log In to*
-
-# File types to ignore
-*.xlsx
-*.lnk
-*.url
-*.docx
-*.csv
-
-# Folders to ignore
 __pycache__/
+Test Scripts/
+Analysis Scripts/
 Downloaded eStatement/
-Old Money Management Tools/
-Combining Financial Reviews/
+Scripts in Development/
+Jupyter Notebooks for Development/
