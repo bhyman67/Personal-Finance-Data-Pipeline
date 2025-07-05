@@ -2,8 +2,8 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from dateutil.relativedelta import relativedelta
 from coinbase.wallet.client import Client
-from coinbase.rest import RESTClient
 from datetime import datetime, timedelta
+from coinbase.rest import RESTClient
 import robin_stocks.robinhood as rh
 from selenium import webdriver
 import xlwings as xw
@@ -15,9 +15,47 @@ import time
 import os
 import re
 
-#               ****************
-#               Helper Functions
-#               ****************
+"""
+UDF (User Defined Functions) Section
+This module provides a set of utility functions and a Money_Manager class for automating personal finance management tasks. The functions and class methods interact with 
+various financial platforms (FirstBank, Robinhood, Coinbase), process and categorize transaction data, manage Excel workbooks via xlwings, and handle PDF eStatements.
+Functions:
+-----------
+increment(match)
+    Increments a matched integer by 1 and returns it as a string prefixed with '$'.
+remove_visa(txn_description)
+    Removes the substring 'VISA ' from a transaction description.
+assign_credit_debit_ind(amt)
+    Assigns 'Credit' if the amount is non-negative, otherwise 'Debit'.
+extract_and_remove_date(description, post_date)
+    Extracts a date in ' MM-DD' format from a transaction description and removes it; if not found, uses the provided post_date.
+check_for_existing_pdf(file_dir)
+    Checks if any PDF files exist in the specified directory.
+PDFmerge(pdfs, output_pdf_name)
+    Merges a list of PDF files into a single output PDF.
+Classes:
+--------
+Money_Manager
+    A class for managing personal finance data, including retrieving account balances and transactions, refreshing income and expense data, retrieving investment holdings, and downloading/merging eStatements.
+    Methods:
+    --------
+    __init__(self, creds=None)
+        Initializes the Money_Manager instance, loads reference data and credentials.
+    __assign_exclude_ind(self, desc)
+        Determines if a transaction description should be excluded from income/expense calculations.
+    __categorize_description(self, desc)
+        Categorizes a transaction description based on reference data.
+    __del__(self)
+        Cleans up resources by quitting the Excel application if necessary.
+    retrieve_account_data_and_transactions(self)
+        Retrieves account balances and transaction data from FirstBank and Robinhood, processes and writes them to Excel.
+    refresh_income_and_expense_data(self)
+        Processes transaction data to classify as income or expense, categorizes descriptions, and writes results to Excel.
+    get_investments_v1(self)
+        Retrieves and consolidates investment holdings from Robinhood and Coinbase, and writes them to Excel.
+    retrieve_estatements(self)
+        Automates downloading, saving, and merging of eStatements from FirstBank online banking, and logs the process.
+"""
 
 def increment(match):
 
@@ -25,6 +63,7 @@ def increment(match):
     return f'${number + 1}'
 
 def remove_visa(txn_description):
+    
     return re.sub(r'\bVISA \b', '', txn_description)
 
 def assign_credit_debit_ind(amt):
@@ -33,6 +72,23 @@ def assign_credit_debit_ind(amt):
         return("Credit")
     else:
         return("Debit")
+
+def extract_and_remove_date(description, post_date):
+
+    full_pattern = r'\bON\s\d{2}-\d{2}\s\d{4}\b'
+    date_pattern = r'\s\d{2}-\d{2}'
+    match = re.search(date_pattern, description)
+    if match:
+        date = match.group(0)
+        description_without_date = re.sub(full_pattern, '', description)
+        return date, description_without_date.strip()
+    else:
+        # Format post_date as ' MM-DD' (with leading space to match extracted format)
+        try:
+            formatted_date = post_date.strftime(' %m-%d')
+        except Exception:
+            formatted_date = str(post_date)  # fallback if not datetime-like
+        return formatted_date, description
 
 def check_for_existing_pdf(file_dir):
   
@@ -58,26 +114,6 @@ def PDFmerge(pdfs, output_pdf_name):
     with open(output_pdf_name, 'wb') as f:
         pdfMerger.write(f)
 
-def extract_and_remove_date(description, post_date):
-
-    full_pattern = r'\bON\s\d{2}-\d{2}\s\d{4}\b'
-    date_pattern = r'\s\d{2}-\d{2}'
-    match = re.search(date_pattern, description)
-    if match:
-        date = match.group(0)
-        description_without_date = re.sub(full_pattern, '', description)
-        return date, description_without_date.strip()
-    else:
-        # Format post_date as ' MM-DD' (with leading space to match extracted format)
-        try:
-            formatted_date = post_date.strftime(' %m-%d')
-        except Exception:
-            formatted_date = str(post_date)  # fallback if not datetime-like
-        return formatted_date, description
-
-#               ****************
-#               ****************
-
 class Money_Manager:
 
     def __init__(self, creds = None):
@@ -92,11 +128,11 @@ class Money_Manager:
             self.wb = xw.Book("../Money Manager.xlsm")
 
         # Read in reference data from the money manager Excel workbook
-        self.desc_cat_lookup = self.wb.sheets["Script Control Center & Ref Dta"].range("Table1").options(dict).value # dictionary
-        self.desc_excludes = self.wb.sheets("Script Control Center & Ref Dta").range("Table2").value # list
-        self.manual_desc = self.wb.sheets("Script Control Center & Ref Dta").range("Table3").options(pd.DataFrame, index = False, header = False).value # dataframe
+        self.description_category_lookup = self.wb.sheets["Script Control Center & Ref Dta"].range("Table1").options(dict).value # dict
+        self.description_excludes = self.wb.sheets["Script Control Center & Ref Dta"].range("Table2").value # list
+        self.manual_descriptions = self.wb.sheets["Script Control Center & Ref Dta"].range("Table3").options(pd.DataFrame, index = False, header = False).value # dataframe
 
-        # Read in some script variables from the money manager Excel workbook
+        # Set account names, which come from the Script Control Center & Ref Dta sheet
         self.account1_name = self.wb.sheets["Script Control Center & Ref Dta"].range("Account_1").value
         self.account2_name = self.wb.sheets["Script Control Center & Ref Dta"].range("Account_2").value
         self.account3_name = self.wb.sheets["Script Control Center & Ref Dta"].range("Account_3").value
@@ -104,6 +140,7 @@ class Money_Manager:
 
         # Set credential variables if they were passed in
         if creds:
+
             self.firstbank_u = creds["FirstBank"][0]
             self.firstbank_p = creds["FirstBank"][1]
             self.robinhood_u = creds["Robinhood"][0]
@@ -115,17 +152,17 @@ class Money_Manager:
 
         # how to check if any items w/in a list are in a string
         truth_val = False
-        if any(desc_exclude in desc for desc_exclude in self.desc_excludes):
+        if any(desc_exclude in desc for desc_exclude in self.description_excludes):
             truth_val = True
         return(truth_val)
 
     def __categorize_description(self, desc):
 
         # loop through the dict
-        for desc_substring in self.desc_cat_lookup:
+        for desc_substring in self.description_category_lookup:
             if desc_substring.upper() in desc.upper():
                 # found a match
-                return(self.desc_cat_lookup[desc_substring])
+                return(self.description_category_lookup[desc_substring])
 
         # Return an empty string if no matches were found
         return("")
@@ -136,15 +173,17 @@ class Money_Manager:
 
             self.wb.app.quit()
 
-    def retrieve_data(self): # rename this function... 
+    def retrieve_account_data_and_transactions(self): 
 
-        # You need to put the error handling back into this scraping routine... 
+        # **************************************************************************************************************************************************
+        # Data retrieval from Robinhood (account balances, interest income, cash card transactions, and direct deposits) - Using Robin Stocks Unofficial API
+        # **************************************************************************************************************************************************
 
-        # Data retrieval from Robinhood
         rh.authentication.login(self.robinhood_u, self.robinhood_p) 
-        self.wb.sheets["Personal Investment Portfolio"].range( self.account3_name.replace(" ","_") ).value = rh.profiles.load_account_profile()["cash_available_for_withdrawal"]
+        rh_cash_available_for_withdrawal = rh.profiles.load_account_profile()["cash_available_for_withdrawal"]
         brokerage_interest_income_json_resp = rh.request_get("https://api.robinhood.com/accounts/sweeps")
-        spending_account_transactions_json_resp = rh.request_get("https://minerva.robinhood.com/history/transactions/")
+        card_settled_transactions_json_resp = rh.request_get("https://minerva.robinhood.com/cards/settled_transactions/")
+        unified_transfers_json_resp = rh.request_get("https://bonfire.robinhood.com/paymenthub/unified_transfers/")
         rh.authentication.logout()
 
         # Create a table out of the brokerage interest income data that you'll be adding to the transactions table
@@ -179,18 +218,47 @@ class Money_Manager:
         brokerage_interest_income["Date"] = pd.to_datetime(brokerage_interest_income["Date"])
         brokerage_interest_income['Date'] = brokerage_interest_income['Date'].dt.tz_localize(None)
         brokerage_interest_income = brokerage_interest_income[ brokerage_interest_income['Date'] >= pd.Timestamp('2021-11-01') ]
-        #brokerage_interest_income = brokerage_interest_income[ brokerage_interest_income['Date'] >= '2021-11-01' ]
         brokerage_interest_income["Date"] = brokerage_interest_income["Date"].dt.strftime('%m/%d/%Y')
 
-        # Set dates 
+        card_settled_transactions = pd.json_normalize(card_settled_transactions_json_resp["results"])
+        card_settled_transactions['direction'] = card_settled_transactions['direction'].str.capitalize()
+        card_settled_transactions = pd.DataFrame({
+            'Date': pd.to_datetime(card_settled_transactions['post_date']),  # Using post_date as the transaction date
+            'Account': 'Robinhood Cash Card',  # Static account name
+            'Amount': card_settled_transactions['amount.amount'],  # Transaction amount
+            'Description': card_settled_transactions['merchant_description'],  # Merchant description
+            'Type': "CASH CARD",  # Transaction type from RH
+            'Credit_Debit_Ind': card_settled_transactions['direction'],  # Credit/Debit indicator
+            'Income_Expense_Exclude': False  # Set to False for all records
+        })
+
+        payroll_transfers = pd.json_normalize(unified_transfers_json_resp['results'])
+        payroll_transfers = payroll_transfers[payroll_transfers['details.description'] == 'PAYROLL']
+        payroll_transfers = pd.DataFrame({
+            'Date': pd.to_datetime(payroll_transfers['details.settlement_date']),
+            'Account': 'Robinhood Cash Management',
+            'Amount': payroll_transfers['amount'],
+            'Description': payroll_transfers['details.description'].fillna('') + ' ' + payroll_transfers['details.originator_name'].fillna(''),
+            'Type': payroll_transfers['transfer_type'],
+            'Credit_Debit_Ind': payroll_transfers['details.direction'].str.capitalize(),
+            'Income_Expense_Exclude': False
+        })
+
+        # ***************************************************************************************************************
+        #        Data retrieval from FirstBank (account balances and transactions) - Web scraping using Selenium
+        # ***************************************************************************************************************
+
+        # Get the current date and the first of the previous month
         crntDt = datetime.today().strftime('%m/%d/%Y')
         firstOfPrevMnth = (datetime.today() - relativedelta(months=1)).replace(day=1).strftime('%m/%d/%Y')
 
-        # List all of your accounts
+        # List all of your FirstBank accounts
         accounts = []
         accounts.append( '{{accountType={account_name}, selectedNumber=2d83bcf05b214c9b1b032bef309d72b4}}'.format(account_name = self.account1_name) )
         accounts.append( '{{accountType={account_name}, selectedNumber=9e720c749c446ee65976669a391134fb}}'.format(account_name = self.account2_name) )
         accounts.append( '{{accountType={account_name}, selectedNumber=8c4a6dff17073338f88e3f5b3ae117a2}}'.format(account_name = self.credit_card_account_name) )
+
+        # You need to put the error handling back into this scraping routine...
 
         # Instantiate the webdriver object
         service = webdriver.chrome.service.Service(self.wb.sheets["Script Control Center & Ref Dta"].range("Chromedriver").value)
@@ -265,27 +333,38 @@ class Money_Manager:
             "(":"-",
             ")":""
         }
-        txns_df["Amount"] = txns_df["Amount"].replace(r'[\$,)]', '', regex=True).replace(r'[(]', '-', regex=True).astype(float) # txns_df["Amount"] = txns_df["Amount"].replace('[\$,)]', '', regex=True).replace('[(]','-',regex=True).astype(float)
-
-        # Add a credit/debit indicator column and an income/expence exclude indicator column
-        desc_excludes = self.wb.sheets("Script Control Center & Ref Dta").range("Table2").value
-        # credit/debit indicator col
-        txns_df["Credit_Debit_Ind"] = ""
-        txns_df["Credit_Debit_Ind"] = txns_df["Amount"].apply(assign_credit_debit_ind)
-        # indicator for transfers w/in internal accounts and credit card payments
-        txns_df["Income_Expense_Exclude"] = ""
-        txns_df["Income_Expense_Exclude"] = txns_df["Description"].apply(self.__assign_exclude_ind)
+        txns_df["Amount"] = txns_df["Amount"].replace(r'[\$,)]', '', regex=True).replace(r'[(]', '-', regex=True).astype(float) 
 
         # Log out and close both the browser and db cnxn
         time.sleep(2)
         browser.find_element(By.XPATH, "//span[@data-i18n = 'main:Log Out']").click()
         browser.quit()
 
-        txns_df = pd.concat([txns_df, brokerage_interest_income])
+        # ****************************************************************************************************************
+        # Light enrichment of the data but most processing work will be done in the refresh_income_and_expense_data method
+        # ****************************************************************************************************************
 
+        # Classify transactions as either credit or debit
+        txns_df["Credit_Debit_Ind"] = ""
+        txns_df["Credit_Debit_Ind"] = txns_df["Amount"].apply(assign_credit_debit_ind)
+        # Indicate whether the transaction is an income or expense
+        txns_df["Income_Expense_Exclude"] = ""
+        txns_df["Income_Expense_Exclude"] = txns_df["Description"].apply(self.__assign_exclude_ind)
+
+        # ***********************************************************************************************************************
+        # Combine the Robinhood transactions with the FirstBank transactions, write to the All Bank Transactions sheet, and write 
+        # account balances to the Overview sheet
+        # ***********************************************************************************************************************
+
+        # Concatenate all the data sets
+        txns_df = pd.concat([txns_df, brokerage_interest_income, card_settled_transactions, payroll_transfers])
+
+        # Write data to Excel
+        # -> account balances to the Overview sheet
         self.wb.sheets["Overview"].range( self.account1_name.replace(" ","_") ).value = float(account1_current_balance.replace("$","").replace(",","").strip())
         self.wb.sheets["Overview"].range( self.account2_name.replace(" ","_") ).value = float(account2_current_balance.replace("$","").replace(",","").strip())
-        # Right here, you could write to a csv, instead of writing to the workbook
+        self.wb.sheets["Personal Investment Portfolio"].range( self.account3_name.replace(" ","_") ).value = rh_cash_available_for_withdrawal 
+        # -> transactions to the All Bank Transactions sheet
         self.wb.sheets["All Bank Transactions"].range('A1').options(pd.DataFrame, index = False).value = txns_df
         self.wb.sheets["All Bank Transactions"].range('A1').current_region.autofit()
 
@@ -303,6 +382,7 @@ class Money_Manager:
         df.loc[(df["Account"] == self.credit_card_account_name) & (df["Credit_Debit_Ind"] == "Credit"), "Income_Expense_Ind"] = "Expense"
         df.loc[(df["Account"] == self.credit_card_account_name) & (df["Credit_Debit_Ind"] == "Debit"), "Income_Expense_Ind"] = "Income"
         df.loc[(df["Account"] == "Robinhood Brokerage") & (df["Credit_Debit_Ind"] == "Credit"), "Income_Expense_Ind"] = "Income"
+        df.loc[(df["Account"] == "Robinhood Cash Card") & (df["Credit_Debit_Ind"] == "Debit"), "Income_Expense_Ind"] = "Expense"
 
         # Flip the sign on all amounts to be positive (for credit card txns that show negetive amts)
         # Convert the column to a numeric type and format as Accounting (in Excel), too. - maybe do this later...
@@ -325,7 +405,7 @@ class Money_Manager:
         df["Description_Category"] = ""
         df["Description_Category"] = df["Description"].apply(self.__categorize_description)
         # Add these description categories manually
-        for index, row in self.manual_desc.iterrows():
+        for index, row in self.manual_descriptions.iterrows():
             if ((df["Date"]==row[0]) & (df["Amount"]==row[1]) & (df["Description"]==row[2])).any():
                 df.loc[ (df["Date"]==row[0]) & (df["Amount"]==row[1]) & (df["Description"]==row[2]), "Description_Category"] = row[3]
 
