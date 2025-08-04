@@ -176,6 +176,41 @@ class PersonalFinanceDataPipeline:
         # Return an empty string if no matches were found
         return("")
 
+    def __get_upwork_income(self):
+        """
+        Retrieves Upwork income data from CSV file and formats it for integration
+        with other transaction data.
+        
+        Returns:
+            pd.DataFrame: Formatted Upwork income transactions
+        """
+        # Get the data from the Upwork Txns worksheet and filter for income transactions
+        upwork_df = self.wb.sheets["Upwork Txns"].range("A1").expand().options(pd.DataFrame, header=True, index=False).value
+        upwork_income_df = upwork_df[upwork_df["Transaction Type"].isin(["Bonus", "Fixed-price", "Hourly", "Expense reimbursement"])]
+
+        #subset cols (Date, Amount $, Transaction Type, Transaction Summary)
+        upwork_income_df = upwork_income_df[["Date", "Amount $", "Transaction Type", "Transaction Summary"]]
+
+        # Rename columns 
+        upwork_income_df = upwork_income_df.rename(columns={
+            "Amount $": "Amount",
+            "Transaction Summary": "Description",
+            "Date": "Post Date",
+            "Transaction Type": "Type"
+        })
+
+        # Add a column for the Txn Month/Day and the account and the Income or Expense indicator and description category
+        upwork_income_df["Txn Month/Day"] = "'" + upwork_income_df["Post Date"].dt.strftime('%m-%d')
+        upwork_income_df["Account"] = "Upwork"
+        upwork_income_df["Income or Expense"] = "Income"
+        upwork_income_df["Description Category"] = "Upwork Income"
+
+        # Ensure cols are in the correct order
+        col_order = ["Post Date", "Txn Month/Day", "Account", "Amount", "Description", "Type", "Income or Expense", "Description Category"]
+        upwork_income_df = upwork_income_df[col_order]
+
+        return upwork_income_df
+
     def __del__(self):
 
         if __name__ != "Scripts.personal_finance_data_pipeline":
@@ -440,7 +475,11 @@ class PersonalFinanceDataPipeline:
             "Income or Expense": "Expense",
             "Description Category": ""
         }])
-        df = pd.concat([df, new_txn], ignore_index=True)
+
+        # Need to add upwork income here
+        upwork_income = self.__get_upwork_income()
+
+        df = pd.concat([df, new_txn, upwork_income])
 
         # Sort the df by date (descending)
         df = df.sort_values(by = "Post Date", ascending = False)
