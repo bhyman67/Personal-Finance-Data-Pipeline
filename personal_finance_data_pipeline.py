@@ -57,6 +57,7 @@ PersonalFinanceDataPipeline
         Cleans up resources by quitting the Excel application if necessary.
     retrieve_account_data_and_transactions(self)
         Retrieves account balances and transaction data from FirstBank and Robinhood, processes and writes them to Excel.
+            -> all time data is being pulled from RH
     refresh_income_and_expense_data(self)
         Processes transaction data to classify as income or expense, categorizes descriptions, and writes results to Excel.
     get_investments_v1(self)
@@ -225,11 +226,18 @@ class PersonalFinanceDataPipeline:
 
         # Robinhood API calls for data
         rh.authentication.login(self.robinhood_u, self.robinhood_p) 
+
+        # Balances
         rh_cash_available_for_withdrawal = rh.profiles.load_account_profile()["cash_available_for_withdrawal"]
-        brokerage_interest_income_json_resp = rh.request_get("https://api.robinhood.com/accounts/sweeps")
+        rhy_accounts_json_resp = rh.request_get("https://bonfire.robinhood.com/rhy/accounts/")
+
+        # RH Spending and Direct Deposits
         card_settled_transactions_json_resp = rh.request_get("https://minerva.robinhood.com/cards/settled_transactions/")
         unified_transfers_json_resp = rh.request_get("https://bonfire.robinhood.com/paymenthub/unified_transfers/")
-        rhy_accounts_json_resp = rh.request_get("https://bonfire.robinhood.com/rhy/accounts/")
+
+        # RH Interest Income (eventually need to add dividend income to this...)
+        brokerage_interest_income_json_resp = rh.request_get("https://api.robinhood.com/accounts/sweeps")
+
         rh.authentication.logout()
 
         # Transform and normalize the brokerage interest income data
@@ -247,6 +255,10 @@ class PersonalFinanceDataPipeline:
             'Credit_Debit_Ind': brokerage_interest_income['direction'].str.capitalize(),
             'Income_Expense_Exclude': False
         })
+        
+        # Write interest income to Robinhood Income tab
+        self.wb.sheets["Robinhood Income"].range('A1').options(pd.DataFrame, index=False).value = brokerage_interest_income
+        self.wb.sheets["Robinhood Income"].range('A1').current_region.autofit()
 
         # Transform and normalize the cash card settled transactions data
         card_settled_transactions = pd.json_normalize(card_settled_transactions_json_resp["results"])
@@ -272,6 +284,12 @@ class PersonalFinanceDataPipeline:
             'Credit_Debit_Ind': payroll_transfers['details.direction'].str.capitalize(),
             'Income_Expense_Exclude': False
         })
+
+        # Combine card transactions and payroll transfers and write to Robinhood Spending tab
+        rh_spending_df = pd.concat([card_settled_transactions, payroll_transfers])
+        rh_spending_df = rh_spending_df.sort_values(by='Date', ascending=False)
+        self.wb.sheets["Robinhood Spending"].range('A1').options(pd.DataFrame, index=False).value = rh_spending_df
+        self.wb.sheets["Robinhood Spending"].range('A1').current_region.autofit()
 
         # Get the Robinhood spending account available cash balance
         rhy_accounts = pd.json_normalize(rhy_accounts_json_resp["results"])
@@ -385,12 +403,8 @@ class PersonalFinanceDataPipeline:
         txns_df["Income_Expense_Exclude"] = txns_df["Description"].apply(self.__assign_exclude_ind)
 
         # ***********************************************************************************************************************
-        # Combine the Robinhood transactions with the FirstBank transactions, write to the All Bank Transactions sheet, and write 
-        # account balances to the Overview sheet
+        # Write account balances and FirstBank transactions to Excel
         # ***********************************************************************************************************************
-
-        # Concatenate all the data sets
-        txns_df = pd.concat([txns_df, brokerage_interest_income, card_settled_transactions, payroll_transfers])
 
         # Write data to Excel
         # -> account balances to the Overview sheet
@@ -404,8 +418,14 @@ class PersonalFinanceDataPipeline:
 
     def refresh_income_and_expense_data(self): # change this to categories, or... income/expense generator
 
+        # Get FirstBank transactions
         df = self.wb.sheets["All Bank Transactions"].range("A1").current_region.options(pd.DataFrame).value
         df.reset_index(inplace = True)
+
+        # Get Robinhood transactions and combine all data sets
+        rh_spending_df = self.wb.sheets["Robinhood Spending"].range('A1').current_region.options(pd.DataFrame, header=True, index=False).value
+        rh_income_df = self.wb.sheets["Robinhood Income"].range('A1').current_region.options(pd.DataFrame, header=True, index=False).value
+        df = pd.concat([df, rh_spending_df, rh_income_df])
 
         # Filter out all income expense excludes
         df = df[df["Income_Expense_Exclude"] == False]
@@ -456,6 +476,7 @@ class PersonalFinanceDataPipeline:
             "Description Category"
         ]]
         
+        # **********************************************************************************************************
         # Replace txns for the HOA roof replacement
         incoming_txn = df[
             (df["Amount"] == 16815.39) & (df["Income or Expense"] == "Income") & (df["Post Date"] == "02/24/2025")
@@ -475,8 +496,9 @@ class PersonalFinanceDataPipeline:
             "Income or Expense": "Expense",
             "Description Category": ""
         }])
+        # **********************************************************************************************************
 
-        # Need to add upwork income here
+        # Add upwork income 
         upwork_income = self.__get_upwork_income()
 
         df = pd.concat([df, new_txn, upwork_income])
