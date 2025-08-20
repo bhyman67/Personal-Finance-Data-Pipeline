@@ -83,21 +83,44 @@ def assign_credit_debit_ind(amt):
         return("Debit")
 
 def extract_and_remove_date(description, post_date):
-
+    """
+    Extracts a date from the description and infers the correct year using post_date as reference.
+    Maintains the original description cleaning behavior while adding year inference.
+    
+    Args:
+        description (str): Transaction description that may contain a date
+        post_date (str/datetime): The post date of the transaction
+    
+    Returns:
+        tuple: (formatted_date, cleaned_description)
+    """
+    
+    # Look for both patterns as in original version
     full_pattern = r'\bON\s\d{2}-\d{2}\s\d{4}\b'
-    date_pattern = r'\s\d{2}-\d{2}'
+    date_pattern = r'\s(\d{2})-(\d{2})'
     match = re.search(date_pattern, description)
+    
     if match:
-        date = match.group(0)
-        description_without_date = re.sub(full_pattern, '', description)
-        return date, description_without_date.strip()
-    else:
-        # Format post_date as ' MM-DD' (with leading space to match extracted format)
+        # Extract month and day for date inference
+        month, day = map(int, match.groups())
+        # Create a date with the month and day, using post_date's year
         try:
-            formatted_date = post_date.strftime(' %m-%d')
-        except Exception:
-            formatted_date = str(post_date)  # fallback if not datetime-like
-        return formatted_date, description
+            # First try with post_date's year
+            txn_date = post_date.replace(month=month, day=day)
+            # If the resulting date is more than 0 days after post_date, 
+            # then it's likely from the previous year
+            if (txn_date - post_date).days > 0:
+                txn_date = txn_date.replace(year=txn_date.year - 1)
+            
+            # Use the original full pattern removal for description cleaning
+            description_without_date = re.sub(full_pattern, '', description)
+            return txn_date.strftime('%m/%d/%Y'), description_without_date.strip()
+        except ValueError:
+            # If the date is invalid (e.g., Feb 30), fall back to post_date
+            pass
+    
+    # If no valid date found in description, use post_date
+    return post_date.strftime('%m/%d/%Y'), description
 
 def check_for_existing_pdf(file_dir):
   
@@ -200,14 +223,19 @@ class PersonalFinanceDataPipeline:
             "Transaction Type": "Type"
         })
 
-        # Add a column for the Txn Month/Day and the account and the Income or Expense indicator and description category
-        upwork_income_df["Txn Month/Day"] = "'" + upwork_income_df["Post Date"].dt.strftime('%m-%d')
+        # Convert dates to proper format
+        upwork_income_df["Post Date"] = pd.to_datetime(upwork_income_df["Post Date"])
+        # For Upwork, transaction date is always the same as post date
+        upwork_income_df["Transaction Date"] = upwork_income_df["Post Date"].dt.strftime('%m/%d/%Y')
+        upwork_income_df["Post Date"] = upwork_income_df["Post Date"].dt.strftime('%m/%d/%Y')
+
+        # Add account and income indicator
         upwork_income_df["Account"] = "Upwork"
         upwork_income_df["Income or Expense"] = "Income"
         upwork_income_df["Description Category"] = "Upwork Income"
 
         # Ensure cols are in the correct order
-        col_order = ["Post Date", "Txn Month/Day", "Account", "Amount", "Description", "Type", "Income or Expense", "Description Category"]
+        col_order = ["Post Date", "Transaction Date", "Account", "Amount", "Description", "Type", "Income or Expense", "Description Category"]
         upwork_income_df = upwork_income_df[col_order]
 
         return upwork_income_df
@@ -246,8 +274,10 @@ class PersonalFinanceDataPipeline:
         brokerage_interest_income = brokerage_interest_income[
             pd.to_datetime(brokerage_interest_income['pay_date']).dt.tz_localize(None) >= pd.Timestamp('2021-11-01')
         ]
+        # Convert pay_date to datetime
+        brokerage_interest_income['Date'] = pd.to_datetime(brokerage_interest_income['pay_date']).dt.strftime('%m/%d/%Y')
         brokerage_interest_income = pd.DataFrame({
-            'Date': pd.to_datetime(brokerage_interest_income['pay_date']).dt.strftime('%m/%d/%Y'),
+            'Date': brokerage_interest_income['Date'],
             'Account': ' '.join(self.account3_name.split()[:2]),
             'Amount': brokerage_interest_income['amount.amount'],
             'Description': brokerage_interest_income['reason'],
@@ -263,7 +293,7 @@ class PersonalFinanceDataPipeline:
         # Transform and normalize the cash card settled transactions data
         card_settled_transactions = pd.json_normalize(card_settled_transactions_json_resp["results"])
         card_settled_transactions = pd.DataFrame({
-            'Date': pd.to_datetime(card_settled_transactions['post_date']),  # Using post_date as the transaction date
+            'Date': pd.to_datetime(card_settled_transactions['post_date']).dt.strftime('%m/%d/%Y'),
             'Account': 'Robinhood Cash Card',  # Static account name
             'Amount': card_settled_transactions['amount.amount'],  # Transaction amount
             'Description': card_settled_transactions['merchant_description'],  # Merchant description
@@ -276,7 +306,7 @@ class PersonalFinanceDataPipeline:
         payroll_transfers = pd.json_normalize(unified_transfers_json_resp['results'])
         payroll_transfers = payroll_transfers[payroll_transfers['details.description'] == 'PAYROLL']
         payroll_transfers = pd.DataFrame({
-            'Date': pd.to_datetime(payroll_transfers['details.settlement_date']),
+            'Date': pd.to_datetime(payroll_transfers['details.settlement_date']).dt.strftime('%m/%d/%Y'),
             'Account': 'Robinhood Cash Management',
             'Amount': payroll_transfers['amount'],
             'Description': payroll_transfers['details.description'].fillna('') + ' ' + payroll_transfers['details.originator_name'].fillna(''),
@@ -448,11 +478,14 @@ class PersonalFinanceDataPipeline:
         # Rename the income/expense indicator col
         df.rename(columns={"Income_Expense_Ind":"Income or Expense"}, inplace=True)
 
-        # Clean up the description col
+        # Clean up the description col and extract transaction dates
         df["Description"] = df["Description"].apply(lambda x: remove_visa(x))
-        df[['Txn Month/Day', 'Description']] = df.apply(
-            lambda row: extract_and_remove_date(row['Description'], row['Date']),
-            axis=1, result_type='expand'
+        # Convert Post Date to datetime if it isn't already
+        df["Date"] = pd.to_datetime(df["Date"])
+        # Extract transaction dates and clean descriptions
+        df[["Txn Date", "Description"]] = df.apply(
+            lambda row: extract_and_remove_date(row["Description"], row["Date"]),
+            axis=1, result_type="expand"
         )
 
         # Add description category col
@@ -463,11 +496,20 @@ class PersonalFinanceDataPipeline:
             if ((df["Date"]==row[0]) & (df["Amount"]==row[1]) & (df["Description"]==row[2])).any():
                 df.loc[ (df["Date"]==row[0]) & (df["Amount"]==row[1]) & (df["Description"]==row[2]), "Description_Category"] = row[3]
 
-        # Rename the date col
-        df.rename(columns={"Date":"Post Date","Description_Category":"Description Category"}, inplace=True)
+        # Rename and reorder columns
+        df.rename(columns={
+            "Date": "Post Date",
+            "Description_Category": "Description Category",
+            "Txn Date": "Transaction Date"
+        }, inplace=True)
+        
+        # Convert dates to final format
+        df["Post Date"] = df["Post Date"].dt.strftime('%m/%d/%Y')
+        
+        # Reorder columns
         df = df[[
             "Post Date",
-            "Txn Month/Day",
+            "Transaction Date",
             "Account",
             "Amount",
             "Description",
@@ -488,7 +530,7 @@ class PersonalFinanceDataPipeline:
         df.drop(outgoing_txn.index, inplace = True)
         new_txn = pd.DataFrame([{
             "Post Date": outgoing_txn["Post Date"].values[0],
-            "Txn Month/Day": outgoing_txn["Txn Month/Day"].values[0],
+            "Transaction Date": outgoing_txn["Post Date"].values[0],  # Using post date as transaction date since this is a manual entry
             "Account": outgoing_txn["Account"].values[0],
             "Amount": 500,
             "Description": "Safeco Insurance Deductible - HOA Roof Replacement",
@@ -501,12 +543,19 @@ class PersonalFinanceDataPipeline:
         # Add upwork income 
         upwork_income = self.__get_upwork_income()
 
+        # Combine all data sources
         df = pd.concat([df, new_txn, upwork_income])
 
-        # Sort the df by date (descending)
-        df = df.sort_values(by = "Post Date", ascending = False)
-
-        # Write the df to the Income and Expensess tab and make it a data table
+        # Convert Post Date back to datetime for proper sorting
+        df["Post Date"] = pd.to_datetime(df["Post Date"])
+        
+        # Sort by Post Date while it's still in datetime format
+        df = df.sort_values(by="Post Date", ascending=False)
+        
+        # Convert back to string format for Excel
+        df["Post Date"] = df["Post Date"].dt.strftime('%m/%d/%Y')
+        
+        # Write the df to the Income and Expenses tab and make it a data table
         self.wb.sheets["Income and Expense Tracking"].tables("transactions").range.clear()
         self.wb.sheets["Income and Expense Tracking"].range('A1').options(pd.DataFrame, index = False).value = df
         self.wb.sheets["Income and Expense Tracking"].tables.add(source = self.wb.sheets["Income and Expense Tracking"].range("A1").current_region, name = "transactions")
