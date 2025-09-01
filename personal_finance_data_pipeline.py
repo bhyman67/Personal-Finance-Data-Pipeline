@@ -94,6 +94,17 @@ def extract_and_remove_date(description, post_date):
     Returns:
         tuple: (formatted_date, cleaned_description)
     """
+    # First, ensure post_date is a datetime object and handle NaT values
+    if not isinstance(post_date, datetime):
+        try:
+            post_date = pd.to_datetime(post_date)
+        except:
+            # If we can't parse the post_date, return empty string
+            return "", description
+    
+    # Handle NaT (Not a Time) values
+    if pd.isna(post_date):
+        return "", description
     
     # Look for both patterns as in original version
     full_pattern = r'\bON\s\d{2}-\d{2}\s\d{4}\b'
@@ -252,23 +263,27 @@ class PersonalFinanceDataPipeline:
         # Data retrieval from Robinhood (account balances, interest income, cash card transactions, and direct deposits) - Using Robin Stocks Unofficial API
         # **************************************************************************************************************************************************
 
-        # Robinhood API calls for data
+        # ***********************  Robinhood API calls for Data  ***********************
+
         rh.authentication.login(self.robinhood_u, self.robinhood_p) 
 
         # Balances
         rh_cash_available_for_withdrawal = rh.profiles.load_account_profile()["cash_available_for_withdrawal"]
         rhy_accounts_json_resp = rh.request_get("https://bonfire.robinhood.com/rhy/accounts/")
 
-        # RH Spending and Direct Deposits
+        # RH Spending - Card Txns, Direct Deposits, and ACH transfers
         card_settled_transactions_json_resp = rh.request_get("https://minerva.robinhood.com/cards/settled_transactions/")
         unified_transfers_json_resp = rh.request_get("https://bonfire.robinhood.com/paymenthub/unified_transfers/")
 
-        # RH Interest Income (eventually need to add dividend income to this...)
+        # RH Interest and Dividend Income 
         brokerage_interest_income_json_resp = rh.request_get("https://api.robinhood.com/accounts/sweeps")
+        rh_dividends = pd.DataFrame(rh.get_dividends())
 
         rh.authentication.logout()
 
-        # Transform and normalize the brokerage interest income data
+        # *********************** Transform and normalize the data ***********************
+
+        # Brokerage Interest Income Data
         brokerage_interest_income = pd.json_normalize(brokerage_interest_income_json_resp["results"])
         # Filter to only include data from November 1st, 2021 and on
         brokerage_interest_income = brokerage_interest_income[
@@ -276,6 +291,7 @@ class PersonalFinanceDataPipeline:
         ]
         # Convert pay_date to datetime
         brokerage_interest_income['Date'] = pd.to_datetime(brokerage_interest_income['pay_date']).dt.strftime('%m/%d/%Y')
+        brokerage_interest_income = brokerage_interest_income[brokerage_interest_income['Date'].notna()] # filter out any record where the date is null or blank (eventually record this)
         brokerage_interest_income = pd.DataFrame({
             'Date': brokerage_interest_income['Date'],
             'Account': ' '.join(self.account3_name.split()[:2]),
@@ -285,9 +301,26 @@ class PersonalFinanceDataPipeline:
             'Credit_Debit_Ind': brokerage_interest_income['direction'].str.capitalize(),
             'Income_Expense_Exclude': False
         })
-        
-        # Write interest income to Robinhood Income tab
-        self.wb.sheets["Robinhood Income"].range('A1').options(pd.DataFrame, index=False).value = brokerage_interest_income
+
+        # Robinhood Dividends
+        # Filter to only include data from November 1st, 2021 and on (before converting to string)
+        rh_dividends_dates = pd.to_datetime(rh_dividends['paid_at']).dt.tz_localize(None)
+        rh_dividends = rh_dividends[rh_dividends_dates >= pd.Timestamp('2021-11-01')]
+        rh_dividends['paid_at'] = rh_dividends_dates.dt.strftime('%m/%d/%Y')
+        # Filter out any record where the date is null or blank (eventually record this)
+        rh_dividends = rh_dividends[rh_dividends['paid_at'].notna()]
+        rh_dividends = pd.DataFrame({
+            'Date': rh_dividends['paid_at'],
+            'Account': ' '.join(self.account3_name.split()[:2]),
+            'Amount': rh_dividends['amount'],
+            'Description': "DIVIDEND", # eventually put the stock name here
+            'Type': "DIVIDEND",
+            'Credit_Debit_Ind': "Credit",
+            'Income_Expense_Exclude': False
+        })
+
+        # Write interest income and dividends to Robinhood Income tab
+        self.wb.sheets["Robinhood Income"].range('A1').options(pd.DataFrame, index=False).value = pd.concat([brokerage_interest_income, rh_dividends])
         self.wb.sheets["Robinhood Income"].range('A1').current_region.autofit()
 
         # Transform and normalize the cash card settled transactions data
@@ -304,7 +337,7 @@ class PersonalFinanceDataPipeline:
 
         # Transform and normalize the payroll transfer data
         payroll_transfers = pd.json_normalize(unified_transfers_json_resp['results'])
-        payroll_transfers = payroll_transfers[payroll_transfers['details.description'] == 'PAYROLL']
+        payroll_transfers = payroll_transfers[payroll_transfers['details.description'].isin(['PAYROLL', 'INDIVIDUAL'])]
         payroll_transfers = pd.DataFrame({
             'Date': pd.to_datetime(payroll_transfers['details.settlement_date']).dt.strftime('%m/%d/%Y'),
             'Account': 'Robinhood Cash Management',
@@ -547,13 +580,13 @@ class PersonalFinanceDataPipeline:
         df = pd.concat([df, new_txn, upwork_income])
 
         # Convert Post Date back to datetime for proper sorting
-        df["Post Date"] = pd.to_datetime(df["Post Date"])
+        df["Post Date"] = pd.to_datetime(df["Post Date"], errors='coerce')
         
         # Sort by Post Date while it's still in datetime format
         df = df.sort_values(by="Post Date", ascending=False)
         
-        # Convert back to string format for Excel
-        df["Post Date"] = df["Post Date"].dt.strftime('%m/%d/%Y')
+        # Convert back to string format for Excel, handling NaT values
+        df["Post Date"] = df["Post Date"].dt.strftime('%m/%d/%Y').fillna('')
         
         # Write the df to the Income and Expenses tab and make it a data table
         self.wb.sheets["Income and Expense Tracking"].tables("transactions").range.clear()
