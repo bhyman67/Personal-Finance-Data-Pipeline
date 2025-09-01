@@ -271,17 +271,23 @@ class PersonalFinanceDataPipeline:
         rh_cash_available_for_withdrawal = rh.profiles.load_account_profile()["cash_available_for_withdrawal"]
         rhy_accounts_json_resp = rh.request_get("https://bonfire.robinhood.com/rhy/accounts/")
 
-        # RH Spending - Card Txns, Direct Deposits, and ACH transfers
+        # RH Spending - Card Txns, Card Rewards, Direct Deposits, and ACH transfers
         card_settled_transactions_json_resp = rh.request_get("https://minerva.robinhood.com/cards/settled_transactions/")
         unified_transfers_json_resp = rh.request_get("https://bonfire.robinhood.com/paymenthub/unified_transfers/")
+        card_rewards_json_resp = rh.request_get("https://api.robinhood.com/pluto/historical_activities/?page_size=1000")
+        # subscriptions
+        subscription_data = rh.request_get("https://api.robinhood.com/subscription/subscription_fees")
 
-        # RH Interest and Dividend Income 
+        # RH Interest and Dividend Income (RH boost income, as well) 
         brokerage_interest_income_json_resp = rh.request_get("https://api.robinhood.com/accounts/sweeps")
         rh_dividends = pd.DataFrame(rh.get_dividends())
+        rh_boost_income = pd.DataFrame(rh.request_get("https://bonfire.robinhood.com/gold/deposit_boost_paid_payouts/"))
 
         rh.authentication.logout()
 
         # *********************** Transform and normalize the data ***********************
+
+        # For loop for normalizing... will come back to this
 
         # Brokerage Interest Income Data
         brokerage_interest_income = pd.json_normalize(brokerage_interest_income_json_resp["results"])
@@ -319,8 +325,35 @@ class PersonalFinanceDataPipeline:
             'Income_Expense_Exclude': False
         })
 
+        # Transform and normalize the card rewards data
+        card_rewards = pd.json_normalize(card_rewards_json_resp["results"])
+        # filter out all records where is_visible is False
+        card_rewards = card_rewards[card_rewards['is_visible'] == True]
+        card_rewards = pd.DataFrame({
+            'Date': pd.to_datetime(card_rewards['created_at'], utc=True).dt.strftime('%m/%d/%Y'),
+            'Account': 'Robinhood Cash Card',  # Static account name
+            # ensure that the amt is numeric
+            'Amount': pd.to_numeric(card_rewards['metadata.amount.amount'], errors='coerce'),
+            'Description': card_rewards['metadata.title'],
+            'Type': "CASH BACK",
+            'Credit_Debit_Ind': "Credit",
+            'Income_Expense_Exclude': False
+        })
+
+        # Transform and normalize the RH boost income data
+        rh_boost_income = pd.json_normalize(rh_boost_income["results"])
+        rh_boost_income = pd.DataFrame({
+            'Date': pd.to_datetime(rh_boost_income['created_at'], utc=True).dt.strftime('%m/%d/%Y'),
+            'Account': 'Robinhood Cash Management',
+            'Amount': rh_boost_income['amount'],
+            'Description': rh_boost_income['title'],
+            'Type': "Cash Rewards",
+            'Credit_Debit_Ind': "Credit",
+            'Income_Expense_Exclude': False
+        })
+
         # Write interest income and dividends to Robinhood Income tab
-        self.wb.sheets["Robinhood Income"].range('A1').options(pd.DataFrame, index=False).value = pd.concat([brokerage_interest_income, rh_dividends])
+        self.wb.sheets["Robinhood Income"].range('A1').options(pd.DataFrame, index=False).value = pd.concat([brokerage_interest_income, rh_dividends, card_rewards, rh_boost_income])
         self.wb.sheets["Robinhood Income"].range('A1').current_region.autofit()
 
         # Transform and normalize the cash card settled transactions data
@@ -348,8 +381,21 @@ class PersonalFinanceDataPipeline:
             'Income_Expense_Exclude': False
         })
 
+        # Transform and normalize the subscription data
+        subscription_df = pd.json_normalize(subscription_data["results"])
+        subscription_df = subscription_df[["amount", "date"]]
+        subscription_df = pd.DataFrame({
+            'Date': pd.to_datetime(subscription_df['date']).dt.strftime('%m/%d/%Y'),
+            'Account': 'Robinhood Cash Management',
+            'Amount': subscription_df['amount'],
+            'Description': 'Subscription Fee',
+            'Type': 'SUBSCRIPTION',
+            'Credit_Debit_Ind': 'Debit',
+            'Income_Expense_Exclude': False
+        })
+
         # Combine card transactions and payroll transfers and write to Robinhood Spending tab
-        rh_spending_df = pd.concat([card_settled_transactions, payroll_transfers])
+        rh_spending_df = pd.concat([card_settled_transactions, payroll_transfers, subscription_df])
         rh_spending_df = rh_spending_df.sort_values(by='Date', ascending=False)
         self.wb.sheets["Robinhood Spending"].range('A1').options(pd.DataFrame, index=False).value = rh_spending_df
         self.wb.sheets["Robinhood Spending"].range('A1').current_region.autofit()
