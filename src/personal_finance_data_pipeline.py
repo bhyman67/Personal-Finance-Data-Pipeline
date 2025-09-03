@@ -162,13 +162,13 @@ class PersonalFinanceDataPipeline:
     def __init__(self, creds = None):
 
         # If this class is being instantiated in the VBA source code (ran by the RunPython VBA funct)
-        if __name__ == "Scripts.personal_finance_data_pipeline":
+        if __name__ == "personal_finance_data_pipeline.src.personal_finance_data_pipeline":
 
             self.wb = xw.Book.caller()
 
         else:
 
-            self.wb = xw.Book("../Money Manager.xlsm")
+            self.wb = xw.Book("../../Money Manager.xlsm")
 
         # Set credential variables if they were passed in
         if creds:
@@ -253,7 +253,7 @@ class PersonalFinanceDataPipeline:
 
     def __del__(self):
 
-        if __name__ != "Scripts.personal_finance_data_pipeline":
+        if __name__ != "personal_finance_data_pipeline.src.personal_finance_data_pipeline":
 
             self.wb.app.quit()
 
