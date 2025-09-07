@@ -157,6 +157,41 @@ def PDFmerge(pdfs, output_pdf_name):
     with open(output_pdf_name, 'wb') as f:
         pdfMerger.write(f)
 
+def fetch_paginated_robinhood_data(initial_url, endpoint_name="API endpoint"):
+    """
+    Fetch all pages of data from a paginated Robinhood endpoint.
+    
+    Args:
+        initial_url (str): The initial URL to start fetching from
+        endpoint_name (str): Name of the endpoint for logging purposes
+    
+    Returns:
+        dict: Combined response with all results and total count
+    """
+    all_results = []
+    next_url = initial_url
+    page_count = 0
+    
+    while next_url:
+        page_count += 1
+        print(f"  Fetching {endpoint_name} page {page_count}...")
+        
+        page_response = rh.request_get(next_url)
+        
+        if page_response and 'results' in page_response:
+            all_results.extend(page_response['results'])
+            next_url = page_response.get('next')
+            print(f"    Found {len(page_response['results'])} records on page {page_count}")
+        else:
+            print(f"    Error or empty response on page {page_count} for {endpoint_name}")
+            break
+    
+    print(f"  Total {endpoint_name}: {len(all_results)} records across {page_count} pages")
+    return {
+        'results': all_results,
+        'count': len(all_results)
+    }
+
 class PersonalFinanceDataPipeline:
 
     def __init__(self, creds = None):
@@ -269,19 +304,20 @@ class PersonalFinanceDataPipeline:
 
         # Balances
         rh_cash_available_for_withdrawal = rh.profiles.load_account_profile()["cash_available_for_withdrawal"]
-        rhy_accounts_json_resp = rh.request_get("https://bonfire.robinhood.com/rhy/accounts/")
+        rhy_accounts_json_resp = fetch_paginated_robinhood_data("https://bonfire.robinhood.com/rhy/accounts/", "RHY accounts")
 
         # RH Spending - Card Txns, Card Rewards, Direct Deposits, and ACH transfers
-        card_settled_transactions_json_resp = rh.request_get("https://minerva.robinhood.com/cards/settled_transactions/")
-        unified_transfers_json_resp = rh.request_get("https://bonfire.robinhood.com/paymenthub/unified_transfers/")
-        card_rewards_json_resp = rh.request_get("https://api.robinhood.com/pluto/historical_activities/?page_size=1000")
+        print("Fetching Robinhood transaction data...")
+        card_settled_transactions_json_resp = fetch_paginated_robinhood_data("https://minerva.robinhood.com/cards/settled_transactions/", "card settled transactions")
+        unified_transfers_json_resp = fetch_paginated_robinhood_data("https://bonfire.robinhood.com/paymenthub/unified_transfers/", "unified transfers")
+        card_rewards_json_resp = fetch_paginated_robinhood_data("https://api.robinhood.com/pluto/historical_activities/?page_size=1000", "card rewards")
         # subscriptions
-        subscription_data = rh.request_get("https://api.robinhood.com/subscription/subscription_fees")
+        subscription_data = fetch_paginated_robinhood_data("https://api.robinhood.com/subscription/subscription_fees", "subscription fees")
 
         # RH Interest and Dividend Income (RH boost income, as well) 
-        brokerage_interest_income_json_resp = rh.request_get("https://api.robinhood.com/accounts/sweeps")
+        brokerage_interest_income_json_resp = fetch_paginated_robinhood_data("https://api.robinhood.com/accounts/sweeps", "brokerage interest income")
         rh_dividends = pd.DataFrame(rh.get_dividends())
-        rh_boost_income = pd.DataFrame(rh.request_get("https://bonfire.robinhood.com/gold/deposit_boost_paid_payouts/"))
+        rh_boost_income_json_resp = fetch_paginated_robinhood_data("https://bonfire.robinhood.com/gold/deposit_boost_paid_payouts/", "boost income")
 
         rh.authentication.logout()
 
@@ -341,7 +377,7 @@ class PersonalFinanceDataPipeline:
         })
 
         # Transform and normalize the RH boost income data
-        rh_boost_income = pd.json_normalize(rh_boost_income["results"])
+        rh_boost_income = pd.json_normalize(rh_boost_income_json_resp["results"])
         rh_boost_income = pd.DataFrame({
             'Date': pd.to_datetime(rh_boost_income['created_at'], utc=True).dt.strftime('%m/%d/%Y'),
             'Account': 'Robinhood Cash Management',
