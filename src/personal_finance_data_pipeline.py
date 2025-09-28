@@ -406,7 +406,7 @@ class PersonalFinanceDataPipeline:
 
         # Transform and normalize the payroll transfer data
         payroll_transfers = pd.json_normalize(unified_transfers_json_resp['results'])
-        payroll_transfers = payroll_transfers[payroll_transfers['details.description'].isin(['PAYROLL', 'INDIVIDUAL'])]
+        payroll_transfers = payroll_transfers[payroll_transfers['details.description'].isin(['PAYROLL', 'INDIVIDUAL', 'CASHOUT'])]
         payroll_transfers = pd.DataFrame({
             'Date': pd.to_datetime(payroll_transfers['details.settlement_date']).dt.strftime('%m/%d/%Y'),
             'Account': 'Robinhood Cash Management',
@@ -557,14 +557,14 @@ class PersonalFinanceDataPipeline:
         self.wb.sheets["Overview"].range( self.account2_name.replace(" ","_") ).value = float(account2_current_balance.replace("$","").replace(",","").strip())
         self.wb.sheets["Personal Investment Portfolio"].range( self.account3_name.replace(" ","_") ).value = rh_cash_available_for_withdrawal 
         self.wb.sheets["Overview"].range(self.account4_name.replace(" ","_")).value = float(spending_account_available_cash)
-        # -> transactions to the All Bank Transactions sheet
-        self.wb.sheets["All Bank Transactions"].range('A1').options(pd.DataFrame, index = False).value = txns_df
-        self.wb.sheets["All Bank Transactions"].range('A1').current_region.autofit()
+        # -> transactions to the All FirstBank Transactions sheet
+        self.wb.sheets["All FirstBank Transactions"].range('A1').options(pd.DataFrame, index = False).value = txns_df
+        self.wb.sheets["All FirstBank Transactions"].range('A1').current_region.autofit()
 
     def refresh_income_and_expense_data(self): # change this to categories, or... income/expense generator
 
         # Get FirstBank transactions
-        df = self.wb.sheets["All Bank Transactions"].range("A1").current_region.options(pd.DataFrame).value
+        df = self.wb.sheets["All FirstBank Transactions"].range("A1").current_region.options(pd.DataFrame).value
         df.reset_index(inplace = True)
 
         # Get Robinhood transactions and combine all data sets
