@@ -203,7 +203,7 @@ class PersonalFinanceDataPipeline:
 
         else:
 
-            self.wb = xw.Book("../../Money Manager.xlsm")
+            self.wb = xw.Book("../Money Management - Tracking, Budgeting, Investing, and Saving.xlsm")
 
         # Set credential variables if they were passed in
         if creds:
@@ -571,6 +571,7 @@ class PersonalFinanceDataPipeline:
         rh_spending_df = self.wb.sheets["Robinhood Spending"].range('A1').current_region.options(pd.DataFrame, header=True, index=False).value
         rh_income_df = self.wb.sheets["Robinhood Income"].range('A1').current_region.options(pd.DataFrame, header=True, index=False).value
         df = pd.concat([df, rh_spending_df, rh_income_df])
+        df.reset_index(inplace = True, drop = True)
 
         # Filter out all income expense excludes
         df = df[df["Income_Expense_Exclude"] == False]
@@ -634,6 +635,10 @@ class PersonalFinanceDataPipeline:
         ]]
         
         # **********************************************************************************************************
+        # **********************************************************************************************************
+
+        # Need to eventually do something more elegant here...
+
         # Replace txns for the HOA roof replacement
         incoming_txn = df[
             (df["Amount"] == 16815.39) & (df["Income or Expense"] == "Income") & (df["Post Date"] == "02/24/2025")
@@ -653,6 +658,26 @@ class PersonalFinanceDataPipeline:
             "Income or Expense": "Expense",
             "Description Category": ""
         }])
+        
+        # *** Exclude specific transactions from October 2025 ***
+        
+        # Exclude $140 deposit on 10/2/2025
+        deposit_txn = df[
+            (df["Amount"] == 140.00) & 
+            (df["Post Date"] == "10/02/2025") & 
+            (df["Description"] == "DEPOSIT * NON-PREPRINTED FORM")
+        ]
+        df.drop(deposit_txn.index, inplace=True)
+        
+        # Exclude $140 ATM withdrawal on 10/1/2025
+        atm_txn = df[
+            (df["Amount"] == 140.00) & 
+            (df["Post Date"] == "10/01/2025") & 
+            (df["Description"] == "ATM 1940 S KIPLING PKWY LAKEWOOD CO")
+        ]
+        df.drop(atm_txn.index, inplace=True)
+
+        # **********************************************************************************************************
         # **********************************************************************************************************
 
         # Add upwork income 
@@ -662,12 +687,10 @@ class PersonalFinanceDataPipeline:
         df = pd.concat([df, new_txn, upwork_income])
 
         # Convert Post Date back to datetime for proper sorting
-        df["Post Date"] = pd.to_datetime(df["Post Date"], errors='coerce')
-        
         # Sort by Post Date while it's still in datetime format
-        df = df.sort_values(by="Post Date", ascending=False)
-        
         # Convert back to string format for Excel, handling NaT values
+        df["Post Date"] = pd.to_datetime(df["Post Date"], errors='coerce')
+        df = df.sort_values(by="Post Date", ascending=False)
         df["Post Date"] = df["Post Date"].dt.strftime('%m/%d/%Y').fillna('')
         
         # Write the df to the Income and Expenses tab and make it a data table
