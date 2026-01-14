@@ -219,6 +219,7 @@ class PersonalFinanceDataPipeline:
         self.description_category_lookup = self.wb.sheets["Script Control Center & Ref Dta"].range("Table1").options(dict).value # dict
         self.description_excludes = self.wb.sheets["Script Control Center & Ref Dta"].range("Table2").value # list
         self.manual_descriptions = self.wb.sheets["Script Control Center & Ref Dta"].range("Table3").options(pd.DataFrame, index = False, header = False).value # dataframe
+        self.txn_excludes = self.wb.sheets["Script Control Center & Ref Dta"].range("txn_excludes").options(pd.DataFrame, index = False, header = False).value # dataframe
 
         # Set account names, which come from the Script Control Center & Ref Dta sheet
         self.account1_name = self.wb.sheets["Script Control Center & Ref Dta"].range("Account_1").value
@@ -471,11 +472,11 @@ class PersonalFinanceDataPipeline:
         # Current balance from account 1 
         time.sleep(10)
         browser.find_element(By.XPATH, '//*[@id="js-acct-name"]/span[1]')
-        account1_current_balance = browser.find_element(By.XPATH, '//*[@id="js-ob-details-container"]/div/div/div[3]/div/div[2]/div[1]/ul/li[1]/strong/span').text
+        account1_current_balance = browser.find_element(By.XPATH, '//*[@id="js-ob-details-container"]/div/div/div[3]/div/div[2]/div[1]/ul/li[2]/strong/span').text
         # Click on account 2 and then grab the current balance from that
         browser.find_element(By.XPATH, '//*[@id="js-product-id-10620720"]/div[2]/div[1]/div/div[1]/p/span').click()
         time.sleep(3)
-        account2_current_balance = browser.find_element(By.XPATH, '//*[@id="js-ob-details-container"]/div/div/div[3]/div/div[2]/div[1]/ul/li[1]/strong/span').text
+        account2_current_balance = browser.find_element(By.XPATH, '//*[@id="js-ob-details-container"]/div/div/div[3]/div/div[2]/div[1]/ul/li[2]/strong/span').text
 
         # Pull data for each account
         html_tables = []
@@ -612,6 +613,20 @@ class PersonalFinanceDataPipeline:
             if ((df["Date"]==row[0]) & (df["Amount"]==row[1]) & (df["Description"]==row[2])).any():
                 df.loc[ (df["Date"]==row[0]) & (df["Amount"]==row[1]) & (df["Description"]==row[2]), "Description_Category"] = row[3]
 
+        # *** Exclude transactions based on txn_excludes table ***
+        
+        for _, exclude_row in self.txn_excludes.iterrows():
+            # Check if matching transactions exist and drop them
+            if ((df["Date"] == exclude_row[0]) & 
+                (df["Amount"] == exclude_row[1]) & 
+                (df["Description"] == exclude_row[2]) & 
+                (df["Income or Expense"] == exclude_row[3])).any():
+                
+                df = df[~((df["Date"] == exclude_row[0]) & 
+                         (df["Amount"] == exclude_row[1]) & 
+                         (df["Description"] == exclude_row[2]) & 
+                         (df["Income or Expense"] == exclude_row[3]))]
+
         # Rename and reorder columns
         df.rename(columns={
             "Date": "Post Date",
@@ -658,24 +673,6 @@ class PersonalFinanceDataPipeline:
             "Income or Expense": "Expense",
             "Description Category": ""
         }])
-        
-        # *** Exclude specific transactions from October 2025 ***
-        
-        # Exclude $140 deposit on 10/2/2025
-        deposit_txn = df[
-            (df["Amount"] == 140.00) & 
-            (df["Post Date"] == "10/02/2025") & 
-            (df["Description"] == "DEPOSIT * NON-PREPRINTED FORM")
-        ]
-        df.drop(deposit_txn.index, inplace=True)
-        
-        # Exclude $140 ATM withdrawal on 10/1/2025
-        atm_txn = df[
-            (df["Amount"] == 140.00) & 
-            (df["Post Date"] == "10/01/2025") & 
-            (df["Description"] == "ATM 1940 S KIPLING PKWY LAKEWOOD CO")
-        ]
-        df.drop(atm_txn.index, inplace=True)
 
         # **********************************************************************************************************
         # **********************************************************************************************************
@@ -782,6 +779,7 @@ class PersonalFinanceDataPipeline:
         self.wb.sheets["Personal Investment Portfolio"].range("A1").current_region.autofit()
         self.wb.sheets["Personal Investment Portfolio"].range("coinbase_usd_cash_bal").value = usd_amt
 
+    # THIS FUNCTION IS DEPRECATED - No longer needed for eStatement retrieval
     def retrieve_estatements(self):
 
         try:
