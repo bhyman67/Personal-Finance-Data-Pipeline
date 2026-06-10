@@ -256,7 +256,7 @@ class PersonalFinanceDataPipeline:
             pd.DataFrame: Formatted Upwork income transactions
         """
         # Get the data from the Upwork Txns worksheet and filter for income transactions
-        upwork_df = self.wb.sheets["Upwork Txns"].range("A1").expand().options(pd.DataFrame, header=True, index=False).value
+        upwork_df = self.wb.sheets["Sole Proprietor Upwork Txns"].range("A1").expand().options(pd.DataFrame, header=True, index=False).value
         upwork_income_df = upwork_df[upwork_df["Transaction Type"].isin(["Bonus", "Fixed-price", "Hourly", "Expense reimbursement"])]
 
         #subset cols (Date, Amount $, Transaction Type, Transaction Summary)
@@ -307,7 +307,7 @@ class PersonalFinanceDataPipeline:
         rh_cash_available_for_withdrawal = rh.profiles.load_account_profile()["cash_available_for_withdrawal"]
         rhy_accounts_json_resp = fetch_paginated_robinhood_data("https://bonfire.robinhood.com/rhy/accounts/", "RHY accounts")
 
-        # RH Spending - Card Txns, Card Rewards, Direct Deposits, and ACH transfers
+        # RH Spending Account Txns - Card Txns, Card Rewards, Direct Deposits, and ACH transfers
         print("Fetching Robinhood transaction data...")
         card_settled_transactions_json_resp = fetch_paginated_robinhood_data("https://minerva.robinhood.com/cards/settled_transactions/", "card settled transactions")
         unified_transfers_json_resp = fetch_paginated_robinhood_data("https://bonfire.robinhood.com/paymenthub/unified_transfers/", "unified transfers")
@@ -315,7 +315,7 @@ class PersonalFinanceDataPipeline:
         # subscriptions
         subscription_data = fetch_paginated_robinhood_data("https://api.robinhood.com/subscription/subscription_fees", "subscription fees")
 
-        # RH Interest and Dividend Income (RH boost income, as well) 
+        # RH Investment Income & Rewards (RH boost income, as well) 
         brokerage_interest_income_json_resp = fetch_paginated_robinhood_data("https://api.robinhood.com/accounts/sweeps", "brokerage interest income")
         rh_dividends = pd.DataFrame(rh.get_dividends())
         rh_boost_income_json_resp = fetch_paginated_robinhood_data("https://bonfire.robinhood.com/gold/deposit_boost_paid_payouts/", "boost income")
@@ -389,9 +389,9 @@ class PersonalFinanceDataPipeline:
             'Income_Expense_Exclude': False
         })
 
-        # Write interest income and dividends to Robinhood Income tab
-        self.wb.sheets["Robinhood Income"].range('A1').options(pd.DataFrame, index=False).value = pd.concat([brokerage_interest_income, rh_dividends, card_rewards, rh_boost_income])
-        self.wb.sheets["Robinhood Income"].range('A1').current_region.autofit()
+        # Write interest income and dividends to RH Investment Income & Rewards tab
+        self.wb.sheets["RH Investment Income & Rewards"].range('A1').options(pd.DataFrame, index=False).value = pd.concat([brokerage_interest_income, rh_dividends, card_rewards, rh_boost_income])
+        self.wb.sheets["RH Investment Income & Rewards"].range('A1').current_region.autofit()
 
         # Transform and normalize the cash card settled transactions data
         card_settled_transactions = pd.json_normalize(card_settled_transactions_json_resp["results"])
@@ -405,9 +405,43 @@ class PersonalFinanceDataPipeline:
             'Income_Expense_Exclude': False  # Set to False for all records
         })
 
-        # Transform and normalize the payroll transfer data
+        # Transform and normalize the payroll transfer data (We need to come back to this!!)
         payroll_transfers = pd.json_normalize(unified_transfers_json_resp['results'])
-        payroll_transfers = payroll_transfers[payroll_transfers['details.description'].isin(['PAYROLL', 'INDIVIDUAL', 'CASHOUT'])]
+        payroll_transfers = payroll_transfers[
+            (payroll_transfers['details.description'].isin(['PAYROLL', 'INDIVIDUAL', 'CASHOUT'])) |
+            (payroll_transfers['details.originator_name'] == 'CorePower Yo-OSV') |
+            # These following three lines are temporary filters for now...
+            (payroll_transfers['id'] == '100b4d42-aab0-4f81-bc5b-65145a49bb93') |
+            (payroll_transfers['id'] == 'aa23dae7-ad56-4b4a-bd1b-4992c8701c94') |
+            (payroll_transfers['id'] == 'af255dc6-654e-4c7d-a1a1-521dfbe18d9b') | # ??? 
+            (payroll_transfers['id'] == '9514bef7-c494-4291-ac5e-74e355f221cc') |
+            (payroll_transfers['id'] == '205abe9a-63fc-46cb-ac7d-4a3053f5b9cc') |
+            (payroll_transfers['id'] == '235e394e-e5fd-47d6-b02c-f7ea395994b9') |
+            (payroll_transfers['id'] == '3f351349-cc3e-4c51-8080-2289e8feb136')
+        ]
+        # Temp: setting the details.settlement_date, details.description, and details.direction fields for these three records
+        payroll_transfers.loc[payroll_transfers['id'] == '100b4d42-aab0-4f81-bc5b-65145a49bb93', 'details.settlement_date'] = '2026-01-10'
+        payroll_transfers.loc[payroll_transfers['id'] == '100b4d42-aab0-4f81-bc5b-65145a49bb93', 'details.description'] = 'RH Investment Sale Cashout'
+        payroll_transfers.loc[payroll_transfers['id'] == '100b4d42-aab0-4f81-bc5b-65145a49bb93', 'details.direction'] = 'Credit'
+        payroll_transfers.loc[payroll_transfers['id'] == 'aa23dae7-ad56-4b4a-bd1b-4992c8701c94', 'details.settlement_date'] = '2026-01-10'
+        payroll_transfers.loc[payroll_transfers['id'] == 'aa23dae7-ad56-4b4a-bd1b-4992c8701c94', 'details.description'] = 'RH Investment Sale Cashout'
+        payroll_transfers.loc[payroll_transfers['id'] == 'aa23dae7-ad56-4b4a-bd1b-4992c8701c94', 'details.direction'] = 'Credit'
+        payroll_transfers.loc[payroll_transfers['id'] == '9514bef7-c494-4291-ac5e-74e355f221cc', 'details.settlement_date'] = '2026-02-27'
+        payroll_transfers.loc[payroll_transfers['id'] == '9514bef7-c494-4291-ac5e-74e355f221cc', 'details.description'] = 'interest_payment'
+        payroll_transfers.loc[payroll_transfers['id'] == '9514bef7-c494-4291-ac5e-74e355f221cc', 'details.direction'] = 'Credit'
+        payroll_transfers.loc[payroll_transfers['id'] == '9514bef7-c494-4291-ac5e-74e355f221cc', 'transfer_type'] = 'INTEREST'
+        payroll_transfers.loc[payroll_transfers['id'] == '205abe9a-63fc-46cb-ac7d-4a3053f5b9cc', 'details.settlement_date'] = '2026-03-31'
+        payroll_transfers.loc[payroll_transfers['id'] == '205abe9a-63fc-46cb-ac7d-4a3053f5b9cc', 'details.description'] = 'interest_payment'
+        payroll_transfers.loc[payroll_transfers['id'] == '205abe9a-63fc-46cb-ac7d-4a3053f5b9cc', 'details.direction'] = 'Credit'
+        payroll_transfers.loc[payroll_transfers['id'] == '205abe9a-63fc-46cb-ac7d-4a3053f5b9cc', 'transfer_type'] = 'INTEREST'
+        payroll_transfers.loc[payroll_transfers['id'] == '235e394e-e5fd-47d6-b02c-f7ea395994b9', 'details.settlement_date'] = '2026-03-05'
+        payroll_transfers.loc[payroll_transfers['id'] == '235e394e-e5fd-47d6-b02c-f7ea395994b9', 'details.description'] = 'Payroll CorePower'
+        payroll_transfers.loc[payroll_transfers['id'] == '235e394e-e5fd-47d6-b02c-f7ea395994b9', 'details.direction'] = 'Credit'
+        payroll_transfers.loc[payroll_transfers['id'] == '235e394e-e5fd-47d6-b02c-f7ea395994b9', 'transfer_type'] = 'PAYROLL: CorePower'
+        payroll_transfers.loc[payroll_transfers['id'] == '3f351349-cc3e-4c51-8080-2289e8feb136', 'details.settlement_date'] = '2026-04-30'
+        payroll_transfers.loc[payroll_transfers['id'] == '3f351349-cc3e-4c51-8080-2289e8feb136', 'details.description'] = 'interest_payment'
+        payroll_transfers.loc[payroll_transfers['id'] == '3f351349-cc3e-4c51-8080-2289e8feb136', 'details.direction'] = 'Credit'
+        payroll_transfers.loc[payroll_transfers['id'] == '3f351349-cc3e-4c51-8080-2289e8feb136', 'transfer_type'] = 'INTEREST'
         payroll_transfers = pd.DataFrame({
             'Date': pd.to_datetime(payroll_transfers['details.settlement_date']).dt.strftime('%m/%d/%Y'),
             'Account': 'Robinhood Cash Management',
@@ -431,13 +465,13 @@ class PersonalFinanceDataPipeline:
             'Income_Expense_Exclude': False
         })
 
-        # Combine card transactions and payroll transfers and write to Robinhood Spending tab
+        # Combine card transactions and payroll transfers and write to RH Spending Account Txns tab
         rh_spending_df = pd.concat([card_settled_transactions, payroll_transfers, subscription_df])
         rh_spending_df = rh_spending_df.sort_values(by='Date', ascending=False)
-        self.wb.sheets["Robinhood Spending"].range('A1').options(pd.DataFrame, index=False).value = rh_spending_df
-        self.wb.sheets["Robinhood Spending"].range('A1').current_region.autofit()
+        self.wb.sheets["RH Spending Account Txns"].range('A1').options(pd.DataFrame, index=False).value = rh_spending_df
+        self.wb.sheets["RH Spending Account Txns"].range('A1').current_region.autofit()
 
-        # Get the Robinhood spending account available cash balance
+        # Get the RH Spending Account Txns account available cash balance
         rhy_accounts = pd.json_normalize(rhy_accounts_json_resp["results"])
         spending_account_available_cash = rhy_accounts[rhy_accounts['purpose'] == 'spend'].iloc[0]['cash_available']
 
@@ -569,8 +603,8 @@ class PersonalFinanceDataPipeline:
         df.reset_index(inplace = True)
 
         # Get Robinhood transactions and combine all data sets
-        rh_spending_df = self.wb.sheets["Robinhood Spending"].range('A1').current_region.options(pd.DataFrame, header=True, index=False).value
-        rh_income_df = self.wb.sheets["Robinhood Income"].range('A1').current_region.options(pd.DataFrame, header=True, index=False).value
+        rh_spending_df = self.wb.sheets["RH Spending Account Txns"].range('A1').current_region.options(pd.DataFrame, header=True, index=False).value
+        rh_income_df = self.wb.sheets["RH Investment Income & Rewards"].range('A1').current_region.options(pd.DataFrame, header=True, index=False).value
         df = pd.concat([df, rh_spending_df, rh_income_df])
         df.reset_index(inplace = True, drop = True)
 
